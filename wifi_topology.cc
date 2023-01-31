@@ -62,7 +62,36 @@ NS_LOG_COMPONENT_DEFINE ("ThirdScriptExample");
 int packets_number = 1;
 Ptr<PacketSink> tcpSink;
 
+void
+ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon)
+{
+    //double localThrou = 0;
+    std::map<FlowId, FlowMonitor::FlowStats> flowStats = flowMon->GetFlowStats ();
+    Ptr<Ipv4FlowClassifier> classing = DynamicCast<Ipv4FlowClassifier> (fmhelper->GetClassifier ());
+    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator stats = flowStats.begin (); stats != flowStats.end (); ++stats)
+    {
 
+        Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
+        std::cout << "Flow ID			: "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
+        std::cout << "Tx Packets = " << stats->second.txPackets << std::endl;
+        std::cout << "Rx Packets = " << stats->second.rxPackets << std::endl;
+        std::cout << "Duration		: "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
+        std::cout << "Last Received Packet	: "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
+        std::cout << "Throughput: " << stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024  << " Mbps" << std::endl;
+        //localThrou = stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024;
+
+        std::cout << "---------------------------------------------------------------------------" << std::endl;
+        flowMon = fmhelper->InstallAll ();
+    }
+    Simulator::Schedule (Seconds (10),&ThroughputMonitor, fmhelper, flowMon);
+    flowMon->SerializeToXmlFile ("ThroughputMonitor.xml", true, true);
+}
+
+void
+pnum(Ptr<PacketSink> udpSink){
+    std::cout << "test packet is -----> " << udpSink->GetTotalRx()<<std::endl;
+    packets_number = udpSink->GetTotalRx()/512;
+}
 
 int
 main (int argc, char *argv[])
@@ -224,6 +253,52 @@ main (int argc, char *argv[])
     }
 
 
+
+
+
+    NS_LOG_INFO ("Run Simulation");
+
+//    std::string fileNameWithNoExtension = "FlowVSThroughput_";
+//    std::string mainPlotTitle = "Flow vs Throughput";
+//    std::string graphicsFileName        = fileNameWithNoExtension + ".png";
+//    std::string plotFileName            = fileNameWithNoExtension + ".plt";
+//    std::string plotTitle               = mainPlotTitle + ", Error: " + std::to_string(error);
+//    std::string dataTitle               = "Throughput";
+//
+//    // Instantiate the plot and set its title.
+//    Gnuplot gnuplot (graphicsFileName);
+//    gnuplot.SetTitle (plotTitle);
+//
+//    // Make the graphics file, which the plot file will be when it
+//    // is used with Gnuplot, be a PNG file.
+//    gnuplot.SetTerminal ("png");
+//
+//    // Set the labels for each axis.
+//    gnuplot.SetLegend ("Flow", "Throughput");
+
+
+//    Gnuplot2dDataset dataset;
+//    dataset.SetTitle (dataTitle);
+//    dataset.SetStyle (Gnuplot2dDataset::LINES_POINTS);
+
+    // Flow monitor.
+    Ptr<FlowMonitor> flowMonitor;
+    FlowMonitorHelper flowHelper;
+    flowMonitor = flowHelper.InstallAll ();
+
+    ThroughputMonitor (&flowHelper, flowMonitor);
+
+    Simulator::Stop (Seconds (duration));
+    Simulator::Run ();
+
+//    //Gnuplot ...continued.
+//    gnuplot.AddDataset (dataset);
+//    // Open the plot file.
+//    std::ofstream plotFile (plotFileName.c_str ());
+//    // Write the plot file.
+//    gnuplot.GenerateOutput (plotFile);
+//    // Close the plot file.
+//    plotFile.close ();
 
 
     return 0;
