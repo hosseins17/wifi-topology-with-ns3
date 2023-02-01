@@ -62,6 +62,8 @@ NS_LOG_COMPONENT_DEFINE ("ThirdScriptExample");
 int packets_number = 1;
 Ptr<PacketSink> tcpSink;
 
+//vector<Ptr<Socket>> receiverSockets;
+
 void
 ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon)
 {
@@ -87,11 +89,33 @@ ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon)
     flowMon->SerializeToXmlFile ("ThroughputMonitor.xml", true, true);
 }
 
+class lb : public Application
+{
+public:
+    lb (uint16_t myPort, Ipv4InterfaceContainer& receivers);
+    virtual ~lb ();
+
+private:
+    virtual void StartApplication (void);
+//    virtual void StopApplication (void);
+
+    void HandleRead (Ptr<Socket> socket);
+
+    uint16_t myPort;
+    Ptr<Socket> mySocket;
+    Ipv4InterfaceContainer myReceivers;
+    std::vector<Ptr<Socket>> receiverSockets;
+    // Ptr<Socket> out_socket;
+};
+
+
 void
 pnum(Ptr<PacketSink> udpSink){
     std::cout << "test packet is -----> " << udpSink->GetTotalRx()<<std::endl;
     packets_number = udpSink->GetTotalRx()/512;
 }
+
+
 
 int
 main (int argc, char *argv[])
@@ -101,7 +125,7 @@ main (int argc, char *argv[])
     uint32_t maxBytes = 0;
     bool verbose = true;
     uint32_t nWifi = 2;
-    double duration = 100.0;
+    double duration = 10.0;
     bool tracing = false;
 
     //generate random number
@@ -221,37 +245,26 @@ main (int argc, char *argv[])
     apps.Stop (Seconds (5.0));
 
     // Create a PacketSinkApplication and install it on node 1.
-    PacketSinkHelper sink ("ns3::UdpSocketFactory",
+//    PacketSinkHelper sink ("ns3::UdpSocketFactory",
+//                           InetSocketAddress (Ipv4Address::GetAny (), port));
+//    apps = sink.Install (wifiApNode.Get (0));
+//
+//    apps.Start (Seconds (0.0));
+//    apps.Stop (Seconds (5.0));
+
+    // Load Balancer
+    Ptr<lb> lbApp = CreateObject<lb> (port, staNodesRightInterface);
+    wifiApNode.Get (0)->AddApplication (lbApp);
+    lbApp->SetStartTime (Seconds (0.0));
+    lbApp->SetStopTime (Seconds (10.0));
+
+
+    // Receivers
+    PacketSinkHelper sink ("ns3::TcpSocketFactory",
                            InetSocketAddress (Ipv4Address::GetAny (), port));
-    apps = sink.Install (wifiApNode.Get (0));
-
-    apps.Start (Seconds (0.0));
-    apps.Stop (Seconds (5.0));
-
-    Ptr<PacketSink> udpSink;
-    udpSink = DynamicCast<PacketSink> (apps.Get (0));
-
-    Simulator::Schedule(Seconds (5.0),&pnum,udpSink);
-
-
-
-    cout << packets_number<<endl;
-    for (int i = 0; i < packets_number; ++i) {
-        /////////////////////////////////////////////////////////////////////////////////////////////
-        source.SetAttribute("Protocol", TypeIdValue(TcpSocketFactory::GetTypeId()));
-        source.SetAttribute("MaxBytes", UintegerValue(128));
-        source.SetAttribute("Remote", AddressValue(
-                InetSocketAddress(staNodesRightInterface.GetAddress(rand() % nWifi), port)));
-        apps = source.Install(wifiApNode.Get(0));
-        apps.Start(Seconds(5.1));
-        apps.Stop(Seconds(10));
-
-        sink.SetAttribute("Protocol", TypeIdValue(TcpSocketFactory::GetTypeId()));
-        apps = sink.Install(wifiStaNodesRight.Get(rand() % nWifi));
-        apps.Start(Seconds(5.1));
-        apps.Stop(Seconds(10));
-    }
-
+    ApplicationContainer sinkApps = sink.Install (wifiStaNodesRight);
+    sinkApps.Start (Seconds (5.0));
+    sinkApps.Stop (Seconds (10.0));
 
 
 
@@ -302,4 +315,58 @@ main (int argc, char *argv[])
 
 
     return 0;
+}
+
+lb::lb (uint16_t myPort, Ipv4InterfaceContainer& receivers)
+        : myPort (myPort),
+          myReceivers (receivers)
+{
+    std::srand (time(0));
+}
+
+lb::~lb ()
+{
+}
+
+void
+lb::StartApplication (void)
+{
+    mySocket = Socket::CreateSocket (GetNode (), UdpSocketFactory::GetTypeId ());
+    InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), myPort);
+    mySocket->Bind (local);
+
+    for (uint32_t i = 0; i < myReceivers.GetN (); i++)
+    {
+        Ptr<Socket> sock = Socket::CreateSocket (GetNode (), TcpSocketFactory::GetTypeId ());
+        InetSocketAddress sockAddr (myReceivers.GetAddress (i), myPort);
+        sock->Connect (sockAddr);
+        receiverSockets.push_back (sock);
+    }
+
+    mySocket->SetRecvCallback (MakeCallback (&lb::HandleRead, this));
+
+
+}
+
+
+void lb::HandleRead (Ptr<Socket> socket)
+{
+
+    Ptr<Packet> packet;
+    Address from;
+
+    while ((packet = socket->RecvFrom (from)))
+    {
+        if (packet->GetSize () == 0)
+        {
+            break;
+        }
+
+        // select a random receiver and send received message in TCP
+        int receiverIndex = rand () % myReceivers.GetN ();
+
+        // send message to the receiver
+        receiverSockets[receiverIndex]->Send (packet);
+
+    }
 }
