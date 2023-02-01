@@ -89,6 +89,33 @@ ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon)
     flowMon->SerializeToXmlFile ("ThroughputMonitor.xml", true, true);
 }
 
+void
+AverageDelayMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon,Gnuplot2dDataset DataSet)
+{
+    double localDelay = 0;
+    std::map<FlowId, FlowMonitor::FlowStats> flowStats = flowMon->GetFlowStats ();
+    Ptr<Ipv4FlowClassifier> classing = DynamicCast<Ipv4FlowClassifier> (fmhelper->GetClassifier ());
+    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator stats = flowStats.begin (); stats != flowStats.end (); ++stats)
+    {
+        Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
+        std::cout << "Flow ID			: "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
+        std::cout << "Tx Packets = " << stats->second.txPackets << std::endl;
+        std::cout << "Rx Packets = " << stats->second.rxPackets << std::endl;
+        std::cout << "Duration		: "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
+        std::cout << "Last Received Packet	: "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
+        std::cout << "Sum of e2e Delay: " << stats->second.delaySum.GetSeconds () << " s" << std::endl;
+        std::cout << "Average of e2e Delay: " << stats->second.delaySum.GetSeconds () / stats->second.rxPackets << " s" << std::endl;
+        localDelay = stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024;
+        if (stats->first == 1)
+        {
+            DataSet.Add ((double)Simulator::Now ().GetSeconds (),(double) localDelay);
+        }
+        std::cout << "---------------------------------------------------------------------------" << std::endl;
+    }
+    Simulator::Schedule (Seconds (10),&AverageDelayMonitor, fmhelper, flowMon,DataSet);
+    flowMon->SerializeToXmlFile ("AverageDelayMonitor.xml", true, true);
+}
+
 class lb : public Application
 {
 public:
@@ -109,22 +136,17 @@ private:
 };
 
 
-void
-pnum(Ptr<PacketSink> udpSink){
-    std::cout << "test packet is -----> " << udpSink->GetTotalRx()<<std::endl;
-    packets_number = udpSink->GetTotalRx()/512;
-}
-
 
 
 int
 main (int argc, char *argv[])
 {
 
-
+//    double error = 0.000001;
     uint32_t maxBytes = 0;
+    string bandwidth = "1Mbps";
     bool verbose = true;
-    uint32_t nWifi = 2;
+    int nWifi = 2;
     double duration = 10.0;
     bool tracing = false;
 
@@ -187,6 +209,13 @@ main (int argc, char *argv[])
     NetDeviceContainer staDevicesRight;
     staDevicesRight = wifi.Install (phy, mac, wifiStaNodesRight);
 
+//    // Create error model on receiver.
+//    Ptr<RateErrorModel> em = CreateObject<RateErrorModel> ();
+//    em->SetAttribute ("ErrorRate", DoubleValue (error));
+//    for (int i = 0; i < nWifi; ++i) {
+//        staDevicesRight.Get(i)->SetAttribute("ReceiveErrorModel", PointerValue (em));
+//    }
+
 
     mac.SetType ("ns3::ApWifiMac",
                  "Ssid", SsidValue (ssid));
@@ -238,6 +267,8 @@ main (int argc, char *argv[])
     OnOffHelper source ("ns3::UdpSocketFactory",InetSocketAddress (apNodeInterface.GetAddress(0), port));
 
     // Set the amount of data to send in bytes. Zero is unlimited.
+    DataRate x(bandwidth);
+    source.SetAttribute("DataRate", DataRateValue(x));
     source.SetAttribute ("MaxBytes", UintegerValue (maxBytes));
     ApplicationContainer apps = source.Install (wifiStaNodesLeft.Get (0));
 
@@ -300,6 +331,7 @@ main (int argc, char *argv[])
     flowMonitor = flowHelper.InstallAll ();
 
     ThroughputMonitor (&flowHelper, flowMonitor);
+    //AverageDelayMonitor (&flowHelper, flowMonitor, dataset);
 
     Simulator::Stop (Seconds (duration));
     Simulator::Run ();
